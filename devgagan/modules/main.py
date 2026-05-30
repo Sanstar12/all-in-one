@@ -189,6 +189,8 @@ async def batch_link(_, message):
     password = None
     if len(message.command) > 1:
         password = message.text.split(None, 1)[1]
+        if password == "defaultpass":
+            password = "@UdemyPie"
         
     freecheck = await chk_user(message, user_id)
     if freecheck == 1 and FREEMIUM_LIMIT == 0 and user_id not in OWNER_ID and not await is_user_verified(user_id):
