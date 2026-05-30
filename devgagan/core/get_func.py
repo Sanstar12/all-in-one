@@ -35,6 +35,11 @@ from config import MONGO_DB as MONGODB_CONNECTION_STRING, LOG_GROUP, OWNER_ID, S
 from devgagan.core.mongo import db as odb
 from telethon import TelegramClient, events, Button
 from devgagantools import fast_upload
+from unzipper.modules.ext_script.ext_helper import _extract_with_7z_helper, split_compress, get_files
+import shutil
+
+# Tracker for split files during batch
+split_download_tracker = {} # {user_id: [list_of_filepaths]}
 
 def thumbnail(sender):
     return f'{sender}.jpg' if os.path.exists(f'{sender}.jpg') else None
@@ -187,7 +192,81 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         gc.collect()
 
 
+async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topic_id, password=None):
+    """Handle files > 2GB by extracting (if archive) and re-compressing them into 1.95GB split parts."""
+    await edit.edit("**🛠️ Processing large content...\nExtracting & Re-compressing...**")
+    
+    # Paths for temporary work
+    extract_path = f"Downloads/{sender}_extract_{time.time()}"
+    compress_path = f"Downloads/{sender}_compress_{time.time()}"
+    os.makedirs(extract_path, exist_ok=True)
+    os.makedirs(compress_path, exist_ok=True)
+    
+    try:
+        # Check if it's an archive that needs extraction first
+        archive_extensions = (".zip", ".rar", ".7z", ".001", ".part1.rar", ".tar", ".gz", ".xz")
+        is_archive = str(file).lower().endswith(archive_extensions)
+        
+        if is_archive:
+            await edit.edit("**📦 Extracting archive...**")
+            extraction = await _extract_with_7z_helper(extract_path, file, password)
+            
+            # Check for common password errors
+            if "Password Error" in extraction or "Wrong password" in extraction or "Data Error" in extraction:
+                await edit.edit("❌ **Extraction Failed!**\nThe file is password protected or corrupted. Use `/batch <password>`.")
+                return
+            
+            # Get list of extracted files
+            extracted_files = await get_files(extract_path)
+            if not extracted_files:
+                # If extraction returned nothing, maybe it's not a standard archive or failed silently
+                # Fallback: Just treat the original file as a single file and split it
+                extracted_files = [file]
+        else:
+            # Single large file, no extraction needed
+            extracted_files = [file]
+
+        await edit.edit(f"✅ **Content prepared.**\nProcessing {len(extracted_files)} item(s) for split compression...")
+        
+        for ext_file in extracted_files:
+            file_size = os.path.getsize(ext_file)
+            base_name = os.path.basename(ext_file)
+            
+            if file_size > 1.9 * 1024 * 1024 * 1024:
+                # If an individual file is > 1.9GB, split compress it
+                await edit.edit(f"📦 **Splitting large file:** `{base_name}`...")
+                # We reuse the same compress_path but ensure it's empty for each item
+                if os.path.exists(compress_path):
+                    shutil.rmtree(compress_path)
+                os.makedirs(compress_path, exist_ok=True)
+                
+                await split_compress(compress_path, ext_file, volume_size="1950m")
+                
+                # Upload all resulting split parts
+                split_parts = await get_files(compress_path)
+                for i, part in enumerate(sorted(split_parts)):
+                    part_caption = f"{caption}\n\n**Part {i+1} of {base_name}**"
+                    await upload_media(sender, target_chat_id, part, part_caption, edit, topic_id)
+            else:
+                # Upload directly
+                await upload_media(sender, target_chat_id, ext_file, caption, edit, topic_id)
+                
+    except Exception as e:
+        await edit.edit(f"❌ **Error during processing:** `{str(e)}`")
+    finally:
+        # Deep cleanup
+        for p in [extract_path, compress_path]:
+            if os.path.exists(p):
+                shutil.rmtree(p)
+        if os.path.exists(file):
+            os.remove(file)
+
 async def get_msg(userbot, sender, edit_id, msg_link, i, message):
+    # Retrieve batch state if available
+    from devgagan.modules.main import batch_mode
+    batch_data = batch_mode.get(sender, {})
+    password = batch_data.get("password")
+
     try:
         # Sanitize the message link
         msg_link = msg_link.split("?single")[0]
@@ -264,26 +343,56 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         
         # Handle file media (photo, document, video)
         file_size = get_message_file_size(msg)
-
-        # if file_size and file_size > size_limit and pro is None:
-        #     await app.edit_message_text(sender, edit_id, "**❌ 4GB Uploader not found**")
-        #     return
-
         file_name = await get_media_filename(msg)
-        edit = await app.edit_message_text(sender, edit_id, "**Downloading...**")
+        
+        # Use a unique download directory for split parts to avoid collisions
+        from config import Config as UnzipConfig
+        download_dir = os.path.join(UnzipConfig.DOWNLOAD_LOCATION, str(sender))
+        os.makedirs(download_dir, exist_ok=True)
+        file_path = os.path.join(download_dir, file_name)
+
+        # Determine if this file is a split archive part
+        is_split_part = file_name.endswith((".001", ".part1.rar", ".part01.rar", ".zip.001"))
+        
+        # If we have tracked files and this new file is NOT a continuation of the split sequence,
+        # we should process the previous sequence first.
+        if sender in split_download_tracker and split_download_tracker[sender]:
+            # ... (logic to check sequence)
+            if not file_name.endswith((".002", ".003", ".004", ".005", ".006", ".007", ".008", ".009", ".010", ".part2.rar", ".part3.rar")):
+                 await edit.edit("**📦 Complete split archive detected. Starting extraction...**")
+                 first_part = split_download_tracker[sender][0]
+                 await handle_2gb_plus_file(first_part, sender, edit, caption, target_chat_id, topic_id, password)
+                 split_download_tracker[sender] = [] 
+
+        edit = await app.edit_message_text(sender, edit_id, f"**Downloading...**\n`{file_name}`")
 
         # Download media
         file = await userbot.download_media(
             msg,
-            file_name=file_name,
+            file_name=file_path,
             progress=progress_bar,
             progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
         )
         
+        # If it's a split part, track it and return (wait for more)
+        if is_split_part or file_name.endswith((".002", ".003", ".004", ".005", ".006", ".007", ".008", ".009", ".010", ".part2.rar", ".part3.rar")):
+            if sender not in split_download_tracker:
+                split_download_tracker[sender] = []
+            split_download_tracker[sender].append(file)
+            await edit.edit(f"**📥 Split part detected.**\nAdded `{file_name}` to tracking.\nWaiting for next part...")
+            # We don't delete edit yet as it will be reused or deleted by batch loop
+            return
+
         caption = await get_final_caption(msg, sender)
 
         # Rename file
         file = await rename_file(file, sender)
+        
+        # Large file handling (> 2GB)
+        if file_size > size_limit:
+            await handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topic_id, password)
+            return
+
         if msg.audio:
             result = await app.send_audio(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
             await result.copy(LOG_GROUP)
