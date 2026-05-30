@@ -194,6 +194,7 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
 
 async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topic_id, password=None):
     """Handle files > 2GB by extracting (if archive) and re-compressing them into 1.95GB split parts."""
+    print(f"DEBUG: Starting handle_2gb_plus_file for user {sender}. File: {file}")
     await edit.edit("**🛠️ Processing large content...\nExtracting & Re-compressing...**")
     
     # Paths for temporary work - use absolute paths
@@ -209,35 +210,40 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
         is_archive = str(file).lower().endswith(archive_extensions)
         
         if is_archive:
+            print(f"DEBUG: Archive detected. Attempting extraction to {extract_path}")
             await edit.edit(f"**📦 Extracting archive...**\nPassword provided: `{'Yes' if password else 'No'}`")
             extraction = await _extract_with_7z_helper(extract_path, file, password)
-            
-            # Check for common password errors - case insensitive and more patterns
+            print(f"DEBUG: 7z Output: {extraction[:500]}...") # Log first 500 chars
+
+            # Check for common password errors
             ext_lower = extraction.lower()
             if "password error" in ext_lower or "wrong password" in ext_lower or "data error" in ext_lower or "cannot open encrypted" in ext_lower:
+                print(f"DEBUG: Password error detected for user {sender}")
                 await edit.edit("❌ **Extraction Failed!**\nThe file is password protected or the provided password is wrong. Please use `/batch <password>` with the correct case-sensitive password.")
                 return
             
             # Get list of extracted files
             extracted_files = await get_files(extract_path)
+            print(f"DEBUG: Found {len(extracted_files)} files after extraction.")
             if not extracted_files:
-                # If extraction returned nothing, maybe it's not a standard archive or failed silently
+                print("DEBUG: Extraction directory is empty. Falling back to treating original as single file.")
                 extracted_files = [file]
         else:
-            # Single large file, no extraction needed
+            print("DEBUG: Not an archive. Treating as a single large file.")
             extracted_files = [file]
 
         await edit.edit(f"✅ **Content prepared.**\nProcessing {len(extracted_files)} item(s) for split compression...")
         
-        for ext_file in extracted_files:
+        for idx, ext_file in enumerate(extracted_files):
             file_size = os.path.getsize(ext_file)
             base_name = os.path.basename(ext_file)
-            
-            # Resolve target_chat_id again just in case
+            print(f"DEBUG: Processing file {idx+1}/{len(extracted_files)}: {base_name} ({file_size} bytes)")
+
+            # Resolve target_chat_id again
             final_target = user_chat_ids.get(sender, target_chat_id)
 
             if file_size > 1.9 * 1024 * 1024 * 1024:
-                # If an individual file is > 1.9GB, split compress it
+                print(f"DEBUG: File {base_name} is > 1.9GB. Starting split compression.")
                 await edit.edit(f"📦 **Splitting large file:** `{base_name}`...")
                 if os.path.exists(compress_path):
                     shutil.rmtree(compress_path)
@@ -247,28 +253,33 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
                 
                 # Upload all resulting split parts
                 split_parts = await get_files(compress_path)
+                print(f"DEBUG: Split into {len(split_parts)} parts.")
                 for i, part in enumerate(sorted(split_parts)):
                     part_caption = f"{caption}\n\n**Part {i+1} of {base_name}**"
+                    print(f"DEBUG: Uploading part {i+1}: {part}")
                     await upload_media(sender, final_target, part, part_caption, edit, topic_id)
             else:
-                # Upload directly
+                print(f"DEBUG: Uploading extracted file: {ext_file}")
                 await upload_media(sender, final_target, ext_file, caption, edit, topic_id)
                 
     except Exception as e:
+        print(f"DEBUG: ERROR in handle_2gb_plus_file: {str(e)}")
         await edit.edit(f"❌ **Error during processing:** `{str(e)}`")
     finally:
+        print(f"DEBUG: Cleaning up directories for user {sender}")
         # Deep cleanup
         for p in [extract_path, compress_path]:
             if os.path.exists(p):
                 try:
                     shutil.rmtree(p)
-                except:
-                    pass
+                except Exception as e:
+                    print(f"DEBUG: Failed to remove dir {p}: {e}")
         if os.path.exists(file):
             try:
                 os.remove(file)
-            except:
-                pass
+                print(f"DEBUG: Removed original file: {file}")
+            except Exception as e:
+                print(f"DEBUG: Failed to remove original file: {e}")
 
 async def get_msg(userbot, sender, edit_id, msg_link, i, message):
     # Retrieve batch state if available
@@ -366,6 +377,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         
         # If we have tracked files and this new file is NOT a continuation, process the previous set
         if sender in split_download_tracker and split_download_tracker[sender] and not is_continuation:
+             print(f"DEBUG: Sequence break detected for user {sender}. Processing gathered parts: {split_download_tracker[sender]}")
              await edit.edit("**📦 Sequence ended. Processing gathered parts...**")
              first_part = split_download_tracker[sender][0]
              await handle_2gb_plus_file(first_part, sender, edit, caption, target_chat_id, topic_id, password)
@@ -380,12 +392,14 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             progress=progress_bar,
             progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
         )
+        print(f"DEBUG: Downloaded to: {file}")
         
         # If it's a split part (start or continuation), track it
         if is_split_part or is_continuation:
             if sender not in split_download_tracker:
                 split_download_tracker[sender] = []
             split_download_tracker[sender].append(file)
+            print(f"DEBUG: User {sender} added {file_name} to tracker. Total: {len(split_download_tracker[sender])}")
             await edit.edit(f"**📥 Part tracked:** `{file_name}`\nWaiting for next part or sequence end...")
             return
 
