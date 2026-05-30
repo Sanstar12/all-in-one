@@ -102,6 +102,15 @@ async def _test_with_7z_helper(archive_path):
     return "Everything is Ok" in await run_cmds_on_cr(__run_cmds_unzipper, cmd=command)
 
 
+# Split compress with 7z
+async def split_compress(path, file_path, volume_size="1950m"):
+    """Compress a file into split zip volumes."""
+    base_name = os.path.basename(file_path)
+    output_path = os.path.join(path, f"{base_name}.zip")
+    command = f'{SEVEN_Z} a -v{volume_size} "{output_path}" "{file_path}"'
+    return await run_cmds_on_cr(__run_cmds_unzipper, cmd=command)
+
+
 # Extract with zstd (for .tar.zst files)
 async def _extract_with_zstd(path, archive_path):
     command = f'zstd -f --output-dir-flat "{path}" -d "{archive_path}"'
