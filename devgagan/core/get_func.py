@@ -346,6 +346,12 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         topic_id = None
         if '/' in str(target_chat_id):
             target_chat_id, topic_id = map(int, target_chat_id.split('/', 1))
+        
+        # Ensure target_chat_id is integer
+        try:
+            target_chat_id = int(target_chat_id)
+        except:
+            pass
 
         # Handle different message types
         if msg.media == MessageMediaType.WEB_PAGE_PREVIEW:
