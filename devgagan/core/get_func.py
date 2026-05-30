@@ -39,7 +39,35 @@ from unzipper.modules.ext_script.ext_helper import _extract_with_7z_helper, spli
 import shutil
 
 # Tracker for split files during batch
-split_download_tracker = {} # {user_id: [list_of_filepaths]}
+# Stores list of dicts: {"path": ..., "caption": ..., "target": ..., "topic": ..., "name": ...}
+split_download_tracker = {} 
+
+def is_continuation(curr_name, prev_name):
+    """Check if curr_name is a continuation of prev_name (split archive)."""
+    if not prev_name:
+        return False
+    
+    # Continuation patterns: .z01, .z02, .002, .003, .part2.rar, .r01, .r02
+    # We strictly look for these to decide if we should wait
+    continuation_re = re.compile(r'\.(?:z\d+|r\d+|00[2-9]|part\d*[2-9](?:\.rar)?)$', re.IGNORECASE)
+    if not continuation_re.search(curr_name):
+        return False
+        
+    # Base name comparison (strip .zip, .z01, etc.)
+    base_re = re.compile(r'\.(?:zip|rar|7z|z\d+|r\d+|\d+|part\d+(?:\.rar)?)$', re.IGNORECASE)
+    base_curr = base_re.sub('', curr_name)
+    base_prev = base_re.sub('', prev_name)
+    
+    return base_curr.lower() == base_prev.lower()
+
+def get_trigger_file(file_list):
+    """Find the 'master' file in a set of split parts (.zip, .rar, .001, etc.)."""
+    master_exts = (".zip", ".rar", ".7z", ".001", ".part1.rar", ".part01.rar")
+    for f in file_list:
+        if f['name'].lower().endswith(master_exts):
+            return f
+    # Fallback to first file
+    return file_list[0] if file_list else None
 
 def thumbnail(sender):
     return f'{sender}.jpg' if os.path.exists(f'{sender}.jpg') else None
@@ -336,113 +364,61 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             return
 
         
-        # Handle file media (photo, document, video)
-        file_size = get_message_file_size(msg)
         file_name = await get_media_filename(msg)
         
-        # Unique download directory
+        # Unique download directory per user to keep sets clean
         from config import Config as UnzipConfig
         download_dir = os.path.join(os.getcwd(), UnzipConfig.DOWNLOAD_LOCATION, str(sender))
         os.makedirs(download_dir, exist_ok=True)
         file_path = os.path.join(download_dir, file_name)
 
-        # Better split detection logic
-        # Parts usually end in .001, .002... OR .part1.rar, .part2.rar
-        is_split_part = re.search(r'\.(?:00\d+|part\d+\.rar)$', file_name, re.IGNORECASE)
-        is_first_part = re.search(r'\.(?:001|part1\.rar|part01\.rar)$', file_name, re.IGNORECASE)
-        
-        # If we have tracked files and this new file is NOT a continuation, process the previous set
+        # Check for sequence break before downloading the current file
         if sender in split_download_tracker and split_download_tracker[sender]:
-            # Check if this new file is a continuation of the previous one
-            prev_file = split_download_tracker[sender][-1]
-            prev_name = os.path.basename(prev_file)
-            
-            # Simple check: are they the same archive base name?
-            # e.g. "Archive.zip.001" and "Archive.zip.002"
-            is_continuation = False
-            if is_split_part:
-                # Remove the part suffix to get the base
-                curr_base = re.sub(r'\.(?:00\d+|part\d+\.rar)$', '', file_name, flags=re.IGNORECASE)
-                prev_base = re.sub(r'\.(?:00\d+|part\d+\.rar)$', '', prev_name, flags=re.IGNORECASE)
-                if curr_base == prev_base:
-                    is_continuation = True
-
-            if not is_continuation:
-                 print(f"DEBUG: Sequence break. Processing gathered parts for {sender}")
-                 await edit.edit("**📦 Sequence ended. Processing gathered parts...**")
-                 first_part = split_download_tracker[sender][0]
-                 await handle_2gb_plus_file(first_part, sender, edit, caption, target_chat_id, topic_id, password)
+            prev_data = split_download_tracker[sender][-1]
+            if not is_continuation(file_name, prev_data['name']):
+                 print(f"DEBUG: Sequence break detected for {sender}. Processing previous set...")
+                 await edit.edit("**📦 Sequence ended. Processing gathered archive...**")
+                 trigger = get_trigger_file(split_download_tracker[sender])
+                 await handle_2gb_plus_file(trigger['path'], sender, edit, trigger['caption'], trigger['target'], trigger['topic'], password)
+                 
+                 # Clean up all tracked files EXCEPT the current one (not downloaded yet)
+                 for tracked in split_download_tracker[sender]:
+                     if os.path.exists(tracked['path']):
+                         try: os.remove(tracked['path'])
+                         except: pass
                  split_download_tracker[sender] = [] 
 
         edit = await app.edit_message_text(sender, edit_id, f"**Downloading...**\n`{file_name}`")
 
         # Download media
-        file = await userbot.download_media(
+        downloaded_file = await userbot.download_media(
             msg,
             file_name=file_path,
             progress=progress_bar,
             progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
         )
-        print(f"DEBUG: Downloaded to: {file}")
-        
-        # Track if it's a split part
-        if is_split_part:
-            if sender not in split_download_tracker:
-                split_download_tracker[sender] = []
-            split_download_tracker[sender].append(file)
-            print(f"DEBUG: Added {file_name} to tracker. Count: {len(split_download_tracker[sender])}")
-            await edit.edit(f"**📥 Part tracked:** `{file_name}`\nWaiting for next part...")
-            return
+        print(f"DEBUG: Downloaded to: {downloaded_file}")
 
         caption = await get_final_caption(msg, sender)
 
-        # Rename file
-        file = await rename_file(file, sender)
+        # Track the file
+        current_data = {
+            "path": downloaded_file,
+            "name": file_name,
+            "caption": caption,
+            "target": target_chat_id,
+            "topic": topic_id
+        }
         
-        # Large file handling (> 2GB)
-        if file_size > size_limit:
-            await handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topic_id, password)
-            return
-
-        if msg.audio:
-            result = await app.send_audio(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
-            await result.copy(LOG_GROUP)
-            await edit.delete(2)
-            os.remove(file)
-            return
+        if sender not in split_download_tracker:
+            split_download_tracker[sender] = []
+        split_download_tracker[sender].append(current_data)
         
-        if msg.voice:
-            result = await app.send_voice(target_chat_id, file, reply_to_message_id=topic_id)
-            await result.copy(LOG_GROUP)
-            await edit.delete(2)
-            os.remove(file)
-            return
-
-
-        if msg.video_note:
-            result = await app.send_video_note(target_chat_id, file, reply_to_message_id=topic_id)
-            await result.copy(LOG_GROUP)
-            await edit.delete(2)
-            os.remove(file)
-            return
-
-        if msg.photo:
-            result = await app.send_photo(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
-            await result.copy(LOG_GROUP)
-            await edit.delete(2)
-            os.remove(file)
-            return
-
-        # Upload media
-        # await edit.edit("**Checking file...**")
-        if file_size > size_limit and (free_check == 1 or pro is None):
-            await edit.delete()
-            await split_and_upload_file(app, sender, target_chat_id, file, caption, topic_id)
-            return
-        elif file_size > size_limit:
-            await handle_large_file(file, sender, edit, caption)
-        else:
-            await upload_media(sender, target_chat_id, file, caption, edit, topic_id)
+        # ALWAYS wait for the next file to confirm if this one was standalone or start of split
+        # The only exception is the very last file of a batch, handled in main.py
+        print(f"DEBUG: Tracking {file_name}. Waiting for next link to decide.")
+        await edit.edit(f"**📥 Tracked:** `{file_name}`\nChecking next link for sequence...")
+        return
 
     except (ChannelBanned, ChannelInvalid, ChannelPrivate, ChatIdInvalid, ChatInvalid):
         await app.edit_message_text(sender, edit_id, "Have you joined the channel?")
