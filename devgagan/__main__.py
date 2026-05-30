@@ -11,7 +11,8 @@
 # Version: 2.0.5
 # License: MIT License
 # ---------------------------------------------------
-
+import os
+os.environ["GIT_PYTHON_REFRESH"] = "quiet"
 import asyncio
 import importlib
 import gc
