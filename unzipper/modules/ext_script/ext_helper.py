@@ -90,12 +90,10 @@ async def run_cmds_on_cr(func, **kwargs):
 async def _extract_with_7z_helper(path, archive_path, password=None):
     LOGGER.info(f"{SEVEN_Z} : " + archive_path + " : " + path)
     
-    # If it's a split part (.zip.001), 7z usually needs to be pointed to the first part
-    # But archive_path should already be the .001 file.
-    
     if password:
-        # Use single quotes for password and double for paths to handle special characters
-        command = f'{SEVEN_Z} x -o"{path}" -p\'{password}\' "{archive_path}" -y'
+        # Use double quotes and escape internal double quotes for robustness
+        safe_password = str(password).replace('"', '\\"')
+        command = f'{SEVEN_Z} x -o"{path}" -p"{safe_password}" "{archive_path}" -y'
     else:
         command = f'{SEVEN_Z} x -o"{path}" "{archive_path}" -y'
     
