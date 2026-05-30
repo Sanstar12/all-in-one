@@ -36,8 +36,6 @@ async def devggn_boot():
     for all_module in ALL_MODULES:
         importlib.import_module("devgagan.modules." + all_module)
     
-    # Import unzipper modules
-    import importlib
     unzip_modules = ["commands", "callbacks"]
     for module in unzip_modules:
         importlib.import_module("unzipper.modules." + module)
