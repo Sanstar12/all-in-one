@@ -61,7 +61,7 @@ async def check_interval(user_id, freecheck):
         cooldown_end = interval_set[user_id]
         if now < cooldown_end:
             remaining_time = (cooldown_end - now).seconds
-            return False, f"Please wait {remaining_time} seconds(s) before sending another link. Alternatively, purchase premium for instant access.\n\n> Hey 👋 You can use /token to use the bot free for 3 hours without any time limit."
+            return False, f"Please wait {remaining_time} seconds(s) before sending another link. Alternatively, purchase premium for instant access.\n\n> Hey ðŸ‘‹ You can use /token to use the bot free for 3 hours without any time limit."
         else:
             del interval_set[user_id]  # Cooldown expired, remove user from interval set
 
@@ -185,6 +185,11 @@ async def batch_link(_, message):
         )
         return
 
+    # Extract password if provided
+    password = None
+    if len(message.command) > 1:
+        password = message.text.split(None, 1)[1]
+        
     freecheck = await chk_user(message, user_id)
     if freecheck == 1 and FREEMIUM_LIMIT == 0 and user_id not in OWNER_ID and not await is_user_verified(user_id):
         await message.reply("Freemium service is currently not available. Upgrade to premium for access.")
@@ -230,14 +235,20 @@ async def batch_link(_, message):
         
     join_button = InlineKeyboardButton("Join Channel", url="https://t.me/UnlockedEdu")
     keyboard = InlineKeyboardMarkup([[join_button]])
+    
+    pass_msg = f"\nPassword: `{password}`" if password else ""
     pin_msg = await app.send_message(
         user_id,
-        f"Batch process started ⚡\nProcessing: 0/{cl}\n\n**Join @Unlockededu**",
+        f"Batch process started âš¡{pass_msg}\nProcessing: 0/{cl}\n\n**Join @Unlockededu**",
         reply_markup=keyboard
     )
     await pin_msg.pin(both_sides=True)
 
     users_loop[user_id] = True
+    
+    # Store the password in the batch_mode dict so we can retrieve it later during file extraction
+    batch_mode[user_id] = {"password": password, "is_batch": True}
+    
     try:
         normal_links_handled = False
         userbot = await initialize_userbot(user_id)
@@ -251,17 +262,17 @@ async def batch_link(_, message):
                     msg = await app.send_message(message.chat.id, f"Processing...")
                     await process_and_upload_link(userbot, user_id, msg.id, link, 0, message)
                     await pin_msg.edit_text(
-                        f"Batch process started ⚡\nProcessing: {i - cs + 1}/{cl}\n\n**__Join @Unlockededu__**",
+                        f"Batch process started âš¡{pass_msg}\nProcessing: {i - cs + 1}/{cl}\n\n**__Join @Unlockededu__**",
                         reply_markup=keyboard
                     )
                     normal_links_handled = True
         if normal_links_handled:
             await set_interval(user_id, interval_minutes=300)
             await pin_msg.edit_text(
-                f"Batch completed successfully for {cl} messages 🎉\n\n**__Join @Unlockededu__**",
+                f"Batch completed successfully for {cl} messages ðŸŽ‰\n\n**__Join @Unlockededu__**",
                 reply_markup=keyboard
             )
-            await app.send_message(message.chat.id, "Batch completed successfully! 🎉")
+            await app.send_message(message.chat.id, "Batch completed successfully! ðŸŽ‰")
             return
             
         # Handle special links with userbot
@@ -277,21 +288,36 @@ async def batch_link(_, message):
                     msg = await app.send_message(message.chat.id, f"Processing...")
                     await process_and_upload_link(userbot, user_id, msg.id, link, 0, message)
                     await pin_msg.edit_text(
-                        f"Batch process started ⚡\nProcessing: {i - cs + 1}/{cl}\n\n**__Join @Unlockededu__**",
+                        f"Batch process started âš¡{pass_msg}\nProcessing: {i - cs + 1}/{cl}\n\n**__Join @Unlockededu__**",
                         reply_markup=keyboard
                     )
 
         await set_interval(user_id, interval_minutes=300)
+        
+        # FINAL CHECK: If there are any pending split files after the loop, process them now
+        from devgagan.core.get_func import split_download_tracker, handle_2gb_plus_file
+        if user_id in split_download_tracker and split_download_tracker[user_id]:
+            msg = await app.send_message(user_id, "**ðŸ“¦ Processing final split archive...**")
+            first_part = split_download_tracker[user_id][0]
+            # Use data from batch_mode
+            password = batch_mode.get(user_id, {}).get("password")
+            # We don't have the last caption here easily, but we can try to guess or use default
+            await handle_2gb_plus_file(first_part, user_id, msg, "Final Split Archive", user_id, None, password)
+            split_download_tracker.pop(user_id, None)
+
         await pin_msg.edit_text(
-            f"Batch completed successfully for {cl} messages 🎉\n\n**__Join @Unlockededu__**",
+            f"Batch completed successfully for {cl} messages ðŸŽ‰\n\n**__Join @Unlockededu__**",
             reply_markup=keyboard
         )
-        await app.send_message(message.chat.id, "Batch completed successfully! 🎉")
+        await app.send_message(message.chat.id, "Batch completed successfully! ðŸŽ‰")
 
     except Exception as e:
         await app.send_message(message.chat.id, f"Error: {e}")
     finally:
         users_loop.pop(user_id, None)
+        batch_mode.pop(user_id, None)
+        from devgagan.core.get_func import split_download_tracker
+        split_download_tracker.pop(user_id, None)
 
 @app.on_message(filters.command("cancel") & filters.private & restricted_filter)
 async def stop_batch(_, message):
