@@ -924,7 +924,6 @@ async def handle_large_file(file, sender, edit, caption):
         await edit.delete()
         os.remove(file)
         gc.collect()
-        return
 
 async def rename_file(file, sender):
     delete_words = load_delete_words(sender)
