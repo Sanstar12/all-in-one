@@ -297,14 +297,19 @@ async def batch_link(_, message):
         await set_interval(user_id, interval_minutes=300)
         
         # FINAL CHECK: If there are any pending split files after the loop, process them now
-        from devgagan.core.get_func import split_download_tracker, handle_2gb_plus_file
+        from devgagan.core.get_func import split_download_tracker, handle_2gb_plus_file, get_trigger_file
         if user_id in split_download_tracker and split_download_tracker[user_id]:
-            msg = await app.send_message(user_id, "**ðŸ“¦ Processing final split archive...**")
-            first_part = split_download_tracker[user_id][0]
-            # Use data from batch_mode
-            password = batch_mode.get(user_id, {}).get("password")
-            # We don't have the last caption here easily, but we can try to guess or use default
-            await handle_2gb_plus_file(first_part, user_id, msg, "Final Split Archive", user_id, None, password)
+            print(f"DEBUG: Processing final batch set for {user_id}")
+            msg = await app.send_message(user_id, "**ðŸ“¦ Processing final archive...**")
+            trigger = get_trigger_file(split_download_tracker[user_id])
+            password = batch_mode.get(user_id, {}).get("password") or "@UdemyPie"
+            await handle_2gb_plus_file(trigger['path'], user_id, msg, trigger['caption'], trigger['target'], trigger['topic'], password)
+            
+            # Cleanup final set
+            for tracked in split_download_tracker[user_id]:
+                if os.path.exists(tracked['path']):
+                    try: os.remove(tracked['path'])
+                    except: pass
             split_download_tracker.pop(user_id, None)
 
         await pin_msg.edit_text(
