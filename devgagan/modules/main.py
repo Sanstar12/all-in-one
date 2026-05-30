@@ -185,8 +185,8 @@ async def batch_link(_, message):
         )
         return
 
-    # Extract password if provided
-    password = None
+    # Extract password if provided, else use default
+    password = "@UdemyPie"
     if len(message.command) > 1:
         password = message.text.split(None, 1)[1]
         if password == "defaultpass":
