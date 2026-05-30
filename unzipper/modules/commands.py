@@ -64,21 +64,7 @@ async def _(_, message: Message):
     if uid != Config.BOT_OWNER and await get_maintenance():
         await message.reply(Messages.MAINTENANCE_ON)
         return
-    if uid == Config.BOT_OWNER:
-        return
-    if await count_ongoing_tasks() >= Config.MAX_CONCURRENT_TASKS:
-        ogtasks = await get_ongoing_tasks()
-        if not any(uid == task.get("user_id") for task in ogtasks):
-            try:
-                await message.reply(
-                    text=Messages.MAX_TASKS.format(Config.MAX_CONCURRENT_TASKS),
-                )
-            except:
-                await app.send_message(
-                    chat_id=uid,
-                    text=Messages.MAX_TASKS.format(Config.MAX_CONCURRENT_TASKS),
-                )
-            return
+    await message.continue_propagation()
 
 
 # Start command removed as it is handled in shrink.py
@@ -178,13 +164,13 @@ async def extract_archive(_, message: Message):
         await extract_archive(_, message)
 
 
-@app.on_message(filters.private & filters.command("queue"))
+@app.on_message(filters.private & filters.command("queue") & archive_filter)
 async def start_queue(_, message: Message):
     await set_queue_mode(message.from_user.id, True)
     await message.reply_text(Messages.QUEUE_MODE_ON)
 
 
-@app.on_message(filters.private & filters.command("cancel"))
+@app.on_message(filters.private & filters.command("cancel") & archive_filter)
 async def cancel_task_by_user(_, message):
     uid = message.from_user.id
     await set_queue_mode(uid, False)
@@ -221,7 +207,7 @@ async def done_queue(client, message: Message):
     await process_queue(client, message, queue, password)
 
 
-@app.on_message(filters.private & filters.command("merge"))
+@app.on_message(filters.private & filters.command("merge") & archive_filter)
 async def merging(_, message: Message):
     try:
         merge_msg = await message.reply(Messages.MERGE)
@@ -240,7 +226,7 @@ async def done_merge(_, message: Message):
         await done_merge(_, message)
 
 
-@app.on_message(filters.private & filters.command("mode"))
+@app.on_message(filters.private & filters.command("mode") & archive_filter)
 async def set_mode_for_user(_, message: Message):
     try:
         upload_mode = await get_upload_mode(message.from_user.id)
@@ -298,7 +284,7 @@ async def get_stats(id):
     return stats_string
 
 
-@app.on_message(filters.command("stats"))
+@app.on_message(filters.command("stats") & archive_filter)
 async def send_stats(_, message: Message):
     try:
         stats_msg = await message.reply(Messages.PROCESSING2)
@@ -385,7 +371,7 @@ async def send_this(_, message: Message):
         await sd_msg.edit(Messages.SEND_FAILED.format(user_id))
 
 
-@app.on_message(filters.command("report"))
+@app.on_message(filters.command("report") & archive_filter)
 async def report_this(_, message: Message):
     sd_msg = await message.reply(Messages.PROCESSING2)
     r_msg = message.reply_to_message
@@ -443,7 +429,7 @@ async def unban_user(_, message: Message):
         await unban_msg.edit(Messages.UNBANNED.format(user_id))
 
 
-@app.on_message(filters.private & filters.command("info"))
+@app.on_message(filters.private & filters.command("info") & archive_filter)
 async def me_stats(_, message: Message):
     me_info = await app.ask(
         chat_id=message.chat.id,
@@ -658,12 +644,12 @@ async def pull_updates(_, message: Message):
         await git_reply.edit(Messages.NO_PULL)
 
 
-@app.on_message(filters.command("donate"))
+@app.on_message(filters.command("donate") & archive_filter)
 async def donate_help(_, message: Message):
     await message.reply(Messages.DONATE_TEXT)
 
 
-@app.on_message(filters.command("vip"))
+@app.on_message(filters.command("vip") & archive_filter)
 async def vip_help(_, message: Message):
     await message.reply(Messages.VIP_INFO)
 
@@ -676,7 +662,7 @@ async def export_db(_, message):
     # Will use https://www.mongodb.com/docs/database-tools/mongoexport/ on command to export as CSV
 
 
-@app.on_message(filters.command("commands"))
+@app.on_message(filters.command("commands") & archive_filter)
 async def getall_cmds(_, message):
     await message.reply(
         Messages.COMMANDS_LIST,
