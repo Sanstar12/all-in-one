@@ -19,7 +19,7 @@ API_HASH = getenv("API_HASH", "85f9204d557b13f5b336bd67dc073a46")
 BOT_TOKEN = getenv("BOT_TOKEN", "8001025057:AAEG31Yg8CNImnS9C78Ct-h9jhMFvJOsx1M")
 OWNER_ID = list(map(int, getenv("OWNER_ID", "6618712970").split()))
 MONGO_DB = getenv("MONGO_DB", "mongodb+srv://firstmong065:BGQoHt83kaIIen52@cluster0.mwmz9.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
-LOG_GROUP = int("LOG_GROUP", "-1002346542951")
+LOG_GROUP = int(getenv("LOG_GROUP", "-1002346542951"))
 CHANNEL_ID = int(getenv("CHANNEL_ID", "-1002261822941"))
 FREEMIUM_LIMIT = int(getenv("FREEMIUM_LIMIT", "0"))
 PREMIUM_LIMIT = int(getenv("PREMIUM_LIMIT", "50000"))
@@ -35,7 +35,8 @@ class Config:
     APP_ID = API_ID
     API_HASH = API_HASH
     BOT_TOKEN = BOT_TOKEN
-    LOGS_CHANNEL = int(LOG_GROUP) if LOG_GROUP.strip("-").isdigit() else LOG_GROUP
+    # Handle LOGS_CHANNEL specifically as it might be a string or int
+    LOGS_CHANNEL = LOG_GROUP
     MONGODB_URL = MONGO_DB
     MONGODB_DBNAME = getenv("MONGODB_DBNAME", "Unzipper_Bot")
     BOT_OWNER = OWNER_ID[0] if OWNER_ID else 0
