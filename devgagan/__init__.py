@@ -53,7 +53,6 @@ if DEFAULT_SESSION:
 else:
     userrbot = None
 
-telethon_client = TelegramClient('telethon_session', API_ID, API_HASH).start(bot_token=BOT_TOKEN)
 
 # MongoDB setup
 tclient = AsyncIOMotorClient(MONGO_DB)
