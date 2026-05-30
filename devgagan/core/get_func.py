@@ -377,7 +377,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             prev_data = split_download_tracker[sender][-1]
             if not is_continuation(file_name, prev_data['name']):
                  print(f"DEBUG: Sequence break detected for {sender}. Processing previous set...")
-                 await edit.edit("**📦 Sequence ended. Processing gathered archive...**")
+                 edit = await app.edit_message_text(sender, edit_id, "**📦 Sequence ended. Processing gathered archive...**")
                  trigger = get_trigger_file(split_download_tracker[sender])
                  await handle_2gb_plus_file(trigger['path'], sender, edit, trigger['caption'], trigger['target'], trigger['topic'], password)
                  
