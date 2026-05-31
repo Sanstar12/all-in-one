@@ -122,10 +122,16 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
         upload_method = await fetch_upload_method(sender)  # Fetch the upload method (Pyrogram or Telethon)
         metadata = video_metadata(file)
         width, height, duration = metadata['width'], metadata['height'], metadata['duration']
-        try:
-            thumb_path = await screenshot(file, duration, sender)
-        except Exception:
-            thumb_path = None
+        
+        # Check for custom user thumbnail first, then fall back to screenshot
+        custom_thumb = f"{sender}.jpg"
+        if os.path.exists(custom_thumb):
+            thumb_path = custom_thumb
+        else:
+            try:
+                thumb_path = await screenshot(file, duration, sender)
+            except Exception:
+                thumb_path = None
 
         video_formats = {'mp4', 'mkv', 'avi', 'mov'}
         document_formats = {'pdf', 'docx', 'txt', 'epub'}
@@ -228,16 +234,14 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
 
 
 async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topic_id, password=None):
-    """Handle files > 2GB by extracting them and uploading contents. Re-compression removed per user request."""
+    """Handle files by extracting them and uploading contents. Uses relative paths as captions."""
     print(f"DEBUG: Starting handle_2gb_plus_file for user {sender}. File: {file}")
     await edit.edit("**🛠️ Processing large content...\nExtracting contents...**")
     
     # Paths for temporary work - use absolute paths
     base_dir = os.getcwd()
     extract_path = os.path.join(base_dir, f"Downloads/{sender}_extract_{time.time()}")
-    compress_path = os.path.join(base_dir, f"Downloads/{sender}_compress_{time.time()}")
     os.makedirs(extract_path, exist_ok=True)
-    os.makedirs(compress_path, exist_ok=True)
     
     try:
         # Check if it's an archive
@@ -248,11 +252,9 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
             print(f"DEBUG: Archive detected. Attempting extraction to {extract_path}")
             await edit.edit(f"**📦 Extracting archive...**\nPassword: `{'@UdemyPie (Default)' if password == '@UdemyPie' else 'Custom'}`")
             extraction = await _extract_with_7z_helper(extract_path, file, password)
-            print(f"DEBUG: 7z Output: {extraction[:500]}...")
-
+            
             ext_lower = extraction.lower()
             if "password error" in ext_lower or "wrong password" in ext_lower or "data error" in ext_lower or "cannot open encrypted" in ext_lower:
-                print(f"DEBUG: Password error detected for user {sender}")
                 await edit.edit("❌ **Extraction Failed!**\nThe file is password protected or the provided password is wrong. Please use `/batch <password>` with the correct case-sensitive password.")
                 return
             
@@ -262,13 +264,19 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
         else:
             extracted_files = [file]
 
-        await edit.edit(f"✅ **Content prepared.**\nUploading {len(extracted_files)} item(s)...")
+        # Ignore list
+        ignore_list = ["IMPORTANT.txt", "README.txt", "README.url"]
+        final_files = [f for f in extracted_files if os.path.basename(f) not in ignore_list]
+
+        await edit.edit(f"✅ **Content prepared.**\nUploading {len(final_files)} item(s)...")
         
-        for idx, ext_file in enumerate(extracted_files):
-            file_name = os.path.basename(ext_file)
-            # Use original filename as caption as requested
-            final_caption = f"**{file_name}**"
-            print(f"DEBUG: Uploading file {idx+1}/{len(extracted_files)}: {file_name}")
+        for idx, ext_file in enumerate(final_files):
+            # Create relative path caption (e.g. Folder/file.mp4)
+            rel_path = os.path.relpath(ext_file, extract_path)
+            if rel_path == ".": rel_path = os.path.basename(ext_file)
+            
+            final_caption = f"**{rel_path}**"
+            print(f"DEBUG: Uploading file {idx+1}/{len(final_files)}: {rel_path}")
             
             final_target = user_chat_ids.get(sender, target_chat_id)
             await upload_media(sender, final_target, ext_file, final_caption, edit, topic_id)
@@ -277,13 +285,9 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
         print(f"DEBUG: ERROR in handle_2gb_plus_file: {str(e)}")
         await edit.edit(f"❌ **Error during processing:** `{str(e)}`")
     finally:
-        # Deep cleanup
-        for p in [extract_path, compress_path]:
-            if os.path.exists(p):
-                try:
-                    shutil.rmtree(p)
-                except Exception as e:
-                    print(f"DEBUG: Failed to remove dir {p}: {e}")
+        if os.path.exists(extract_path):
+            try: shutil.rmtree(extract_path)
+            except: pass
         if os.path.exists(file):
             try:
                 os.remove(file)
@@ -379,42 +383,76 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         
         file_name = await get_media_filename(msg)
         
-        # Unique download directory per user to keep sets clean
+        # Determine if it's an archive or normal media
+        archive_extensions = (".zip", ".rar", ".7z", ".001", ".part1.rar", ".tar", ".gz", ".xz", ".z01", ".z02", ".z03", ".z04", ".z05", ".r01", ".r02")
+        is_archive = file_name.lower().endswith(archive_extensions)
+
+        # Unique download directory per user
         from config import Config as UnzipConfig
         download_dir = os.path.join(os.getcwd(), UnzipConfig.DOWNLOAD_LOCATION, str(sender))
         os.makedirs(download_dir, exist_ok=True)
         file_path = os.path.join(download_dir, file_name)
 
-        # Check for sequence break before downloading the current file
+        if not is_archive:
+            # NORMAL MEDIA: Process immediately
+            print(f"DEBUG: Normal media detected ({file_name}). Processing immediately.")
+            edit = await app.edit_message_text(sender, edit_id, f"**Downloading...**\n`{file_name}`")
+            
+            # Download
+            file = await userbot.download_media(
+                msg,
+                file_name=os.path.abspath(file_path),
+                progress=progress_bar,
+                progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
+            )
+            
+            caption = await get_final_caption(msg, sender)
+            file = await rename_file(file, sender)
+            
+            # Use original media handling logic
+            if msg.audio:
+                result = await app.send_audio(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
+            elif msg.voice:
+                result = await app.send_voice(target_chat_id, file, reply_to_message_id=topic_id)
+            elif msg.video_note:
+                result = await app.send_video_note(target_chat_id, file, reply_to_message_id=topic_id)
+            elif msg.photo:
+                result = await app.send_photo(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
+            else:
+                # Video or document
+                await upload_media(sender, target_chat_id, file, caption, edit, topic_id)
+            
+            if result: await result.copy(LOG_GROUP)
+            return
+
+        # ARCHIVE: Use look-ahead tracking
+        # Check for sequence break
         if sender in split_download_tracker and split_download_tracker[sender]:
             prev_data = split_download_tracker[sender][-1]
             if not is_continuation(file_name, prev_data['name']):
-                 print(f"DEBUG: Sequence break detected for {sender}. Processing previous set...")
+                 print(f"DEBUG: Sequence break. Processing gathered archive for {sender}")
                  edit = await app.edit_message_text(sender, edit_id, "**📦 Sequence ended. Processing gathered archive...**")
                  trigger = get_trigger_file(split_download_tracker[sender])
-                 
-                 # IMPORTANT: Pass the correct tracked path from the tracker
                  await handle_2gb_plus_file(trigger['path'], sender, edit, trigger['caption'], trigger['target'], trigger['topic'], password)
                  
-                 # Clean up tracked files EXCEPT current one (not downloaded yet)
+                 # Cleanup sequence
                  for tracked in split_download_tracker[sender]:
-                     if tracked['path'] != trigger['path'] and os.path.exists(tracked['path']):
+                     if os.path.exists(tracked['path']):
                          try: os.remove(tracked['path'])
                          except: pass
                  split_download_tracker[sender] = [] 
 
-        edit = await app.edit_message_text(sender, edit_id, f"**Downloading...**\n`{file_name}`")
+        edit = await app.edit_message_text(sender, edit_id, f"**Downloading Archive Part...**\n`{file_name}`")
 
-        # Download media using absolute path
-        download_path = await userbot.download_media(
+        # Download media
+        downloaded_path = await userbot.download_media(
             msg,
             file_name=os.path.abspath(file_path),
             progress=progress_bar,
             progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
         )
-        # Assign to file for both tracker and cleanup
-        file = download_path
-        print(f"DEBUG: Downloaded to: {file}")
+        file = downloaded_path # For finally cleanup if needed
+        print(f"DEBUG: Downloaded archive part to: {file}")
 
         caption = await get_final_caption(msg, sender)
 
@@ -431,9 +469,7 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             split_download_tracker[sender] = []
         split_download_tracker[sender].append(current_data)
         
-        # ALWAYS wait for the next file to confirm if this one was standalone or start of split
-        # The only exception is the very last file of a batch, handled in main.py
-        print(f"DEBUG: Tracking {file_name}. Total in sequence: {len(split_download_tracker[sender])}")
+        print(f"DEBUG: Tracking {file_name}. Sequence count: {len(split_download_tracker[sender])}")
         await app.edit_message_text(sender, edit_id, f"**📥 Tracked:** `{file_name}`\nChecking next link for sequence...")
         return
 
