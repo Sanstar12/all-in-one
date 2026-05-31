@@ -315,7 +315,7 @@ async def batch_link(_, message):
             print(f"DEBUG: Processing final batch set for {user_id}")
             msg = await app.send_message(user_id, "**ðŸ“¦ Processing final gathered archive...**")
             trigger = get_trigger_file(split_download_tracker[user_id])
-            # Retrieve password from local scope or batch_mode
+            # Use data from current batch scope
             current_pass = password or "@UdemyPie"
             await handle_2gb_plus_file(trigger['path'], user_id, msg, trigger['caption'], trigger['target'], trigger['topic'], current_pass)
             
@@ -330,10 +330,10 @@ async def batch_link(_, message):
             f"Batch completed successfully for {cl} messages ðŸŽ‰\n\n**__Join @Unlockededu__**",
             reply_markup=keyboard
         )
-        await app.send_message(message.chat.id, "Batch completed successfully! ðŸŽ‰")
+        await app.send_message(user_id, "Batch completed successfully! ðŸŽ‰")
 
     except Exception as e:
-        await app.send_message(message.chat.id, f"Error: {e}")
+        await app.send_message(user_id, f"Error: {e}")
     finally:
         users_loop.pop(user_id, None)
         batch_mode.pop(user_id, None)
