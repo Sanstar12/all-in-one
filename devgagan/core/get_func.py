@@ -285,30 +285,40 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
             if base not in ignore_list and not base.lower().endswith(".vtt"):
                 final_files.append(f)
 
-        await edit.edit(f"✅ **Content prepared.**\nUploading {len(final_files)} item(s)...")
+        total_files = len(final_files)
+        await edit.edit(f"✅ **Content prepared.**\nFound {total_files} valid file(s). Starting uploads...")
         
         for idx, ext_file in enumerate(final_files):
             # Create relative path caption (e.g. Folder/file.mp4)
             rel_path = os.path.relpath(ext_file, extract_path)
             if rel_path == ".": rel_path = os.path.basename(ext_file)
             
-            final_caption = f"**{rel_path}**"
-            print(f"DEBUG: Uploading file {idx+1}/{len(final_files)}: {rel_path}")
+            # Show progress in the status message
+            current_count = idx + 1
+            await edit.edit(f"**⬆️ Uploading {current_count}/{total_files}:**\n`{rel_path}`")
             
-            # Re-resolve target_chat_id and ensure it's handled correctly
+            final_caption = f"**{rel_path}**"
+            print(f"DEBUG: Uploading file {current_count}/{total_files}: {rel_path}")
+            
+            # Re-resolve target_chat_id and AUTO-FIX missing -100 prefix
             raw_target = user_chat_ids.get(sender, target_chat_id)
+            final_target = raw_target
             try:
-                if isinstance(raw_target, str) and not raw_target.startswith("@"):
-                    # If it's a numeric string, convert to int
-                    if raw_target.strip("-").isdigit():
-                        final_target = int(raw_target)
+                target_str = str(raw_target).strip()
+                if target_str.isdigit():
+                    # If it's a 10-digit number (common for channel IDs), prepend -100
+                    if len(target_str) >= 10:
+                        final_target = int(f"-100{target_str}")
                     else:
-                        final_target = raw_target
-                else:
-                    final_target = raw_target
+                        final_target = int(target_str)
+                elif target_str.startswith("-") and target_str[1:].isdigit():
+                    final_target = int(target_str)
+                elif not target_str.startswith("@"):
+                    final_target = f"@{target_str}"
             except:
                 final_target = raw_target
 
+            print(f"DEBUG: Resolved target_chat_id: {final_target}")
             await upload_media(sender, final_target, ext_file, final_caption, edit, topic_id)
                 
     except Exception as e:
@@ -393,10 +403,16 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             try: topic_id = int(topic_id)
             except: pass
         
-        # Ensure target_chat_id is integer if it looks like one
+        # Ensure target_chat_id is integer if it looks like one, and AUTO-FIX missing -100
         try:
-            if isinstance(target_chat_id, str) and target_chat_id.strip("-").isdigit():
-                target_chat_id = int(target_chat_id)
+            target_str = str(target_chat_id).strip()
+            if target_str.isdigit():
+                if len(target_str) >= 10:
+                    target_chat_id = int(f"-100{target_str}")
+                else:
+                    target_chat_id = int(target_str)
+            elif target_str.startswith("-") and target_str[1:].isdigit():
+                target_chat_id = int(target_str)
         except:
             pass
 
