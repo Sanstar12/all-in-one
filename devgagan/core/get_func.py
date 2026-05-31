@@ -392,11 +392,13 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                  print(f"DEBUG: Sequence break detected for {sender}. Processing previous set...")
                  edit = await app.edit_message_text(sender, edit_id, "**📦 Sequence ended. Processing gathered archive...**")
                  trigger = get_trigger_file(split_download_tracker[sender])
+                 
+                 # IMPORTANT: Pass the correct tracked path from the tracker
                  await handle_2gb_plus_file(trigger['path'], sender, edit, trigger['caption'], trigger['target'], trigger['topic'], password)
                  
-                 # Clean up all tracked files EXCEPT the current one (not downloaded yet)
+                 # Clean up tracked files EXCEPT current one (not downloaded yet)
                  for tracked in split_download_tracker[sender]:
-                     if os.path.exists(tracked['path']):
+                     if tracked['path'] != trigger['path'] and os.path.exists(tracked['path']):
                          try: os.remove(tracked['path'])
                          except: pass
                  split_download_tracker[sender] = [] 
@@ -404,13 +406,15 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         edit = await app.edit_message_text(sender, edit_id, f"**Downloading...**\n`{file_name}`")
 
         # Download media using absolute path
-        downloaded_file = await userbot.download_media(
+        download_path = await userbot.download_media(
             msg,
             file_name=os.path.abspath(file_path),
             progress=progress_bar,
             progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
         )
-        print(f"DEBUG: Downloaded to: {downloaded_file}")
+        # Assign to file for both tracker and cleanup
+        file = download_path
+        print(f"DEBUG: Downloaded to: {file}")
 
         caption = await get_final_caption(msg, sender)
 
