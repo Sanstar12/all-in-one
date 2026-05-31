@@ -119,6 +119,19 @@ async def format_caption_to_html(caption: str) -> str:
 
 async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
     try:
+        # RESOLVE TARGET CHAT ID
+        # Ensure target_chat_id is in the correct format for Pyrogram
+        try:
+            if isinstance(target_chat_id, str):
+                if target_chat_id.strip("-").isdigit():
+                    target_chat_id = int(target_chat_id)
+                elif not target_chat_id.startswith("@"):
+                    # Fallback for usernames without @
+                    target_chat_id = f"@{target_chat_id}"
+        except:
+            pass
+
+        print(f"DEBUG: Resolving target_chat_id: {target_chat_id}")
         upload_method = await fetch_upload_method(sender)  # Fetch the upload method (Pyrogram or Telethon)
         metadata = video_metadata(file)
         width, height, duration = metadata['width'], metadata['height'], metadata['duration']
@@ -266,7 +279,11 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
 
         # Ignore list
         ignore_list = ["IMPORTANT.txt", "README.txt", "README.url"]
-        final_files = [f for f in extracted_files if os.path.basename(f) not in ignore_list]
+        final_files = []
+        for f in extracted_files:
+            base = os.path.basename(f)
+            if base not in ignore_list and not base.lower().endswith(".vtt"):
+                final_files.append(f)
 
         await edit.edit(f"✅ **Content prepared.**\nUploading {len(final_files)} item(s)...")
         
@@ -278,7 +295,20 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
             final_caption = f"**{rel_path}**"
             print(f"DEBUG: Uploading file {idx+1}/{len(final_files)}: {rel_path}")
             
-            final_target = user_chat_ids.get(sender, target_chat_id)
+            # Re-resolve target_chat_id and ensure it's handled correctly
+            raw_target = user_chat_ids.get(sender, target_chat_id)
+            try:
+                if isinstance(raw_target, str) and not raw_target.startswith("@"):
+                    # If it's a numeric string, convert to int
+                    if raw_target.strip("-").isdigit():
+                        final_target = int(raw_target)
+                    else:
+                        final_target = raw_target
+                else:
+                    final_target = raw_target
+            except:
+                final_target = raw_target
+
             await upload_media(sender, final_target, ext_file, final_caption, edit, topic_id)
                 
     except Exception as e:
@@ -359,11 +389,14 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         target_chat_id = user_chat_ids.get(message.chat.id, message.chat.id)
         topic_id = None
         if '/' in str(target_chat_id):
-            target_chat_id, topic_id = map(int, target_chat_id.split('/', 1))
+            target_chat_id, topic_id = map(str, target_chat_id.split('/', 1))
+            try: topic_id = int(topic_id)
+            except: pass
         
-        # Ensure target_chat_id is integer
+        # Ensure target_chat_id is integer if it looks like one
         try:
-            target_chat_id = int(target_chat_id)
+            if isinstance(target_chat_id, str) and target_chat_id.strip("-").isdigit():
+                target_chat_id = int(target_chat_id)
         except:
             pass
 
