@@ -115,6 +115,21 @@ async def single_link(_, message):
         else:
             await process_special_links(userbot, user_id, msg, link)
             
+        # FLUSH TRACKER: If a single archive was sent, trigger it now
+        from devgagan.core.get_func import split_download_tracker, handle_2gb_plus_file, get_trigger_file
+        if user_id in split_download_tracker and split_download_tracker[user_id]:
+            print(f"DEBUG: Flushing single archive for {user_id}")
+            fmsg = await app.send_message(user_id, "**ðŸ“¦ Processing gathered archive...**")
+            trigger = get_trigger_file(split_download_tracker[user_id])
+            await handle_2gb_plus_file(trigger['path'], user_id, fmsg, trigger['caption'], trigger['target'], trigger['topic'], "@UdemyPie")
+            
+            # Cleanup
+            for tracked in split_download_tracker[user_id]:
+                if os.path.exists(tracked['path']):
+                    try: os.remove(tracked['path'])
+                    except: pass
+            split_download_tracker.pop(user_id, None)
+
     except FloodWait as fw:
         await msg.edit_text(f'Try again after {fw.x} seconds due to floodwait from Telegram.')
     except Exception as e:
@@ -185,12 +200,10 @@ async def batch_link(_, message):
         )
         return
 
-    # Extract password if provided, else use default
+    # Extract password if provided, else use default @UdemyPie
     password = "@UdemyPie"
     if len(message.command) > 1:
         password = message.text.split(None, 1)[1]
-        if password == "defaultpass":
-            password = "@UdemyPie"
         
     freecheck = await chk_user(message, user_id)
     if freecheck == 1 and FREEMIUM_LIMIT == 0 and user_id not in OWNER_ID and not await is_user_verified(user_id):
@@ -300,10 +313,11 @@ async def batch_link(_, message):
         from devgagan.core.get_func import split_download_tracker, handle_2gb_plus_file, get_trigger_file
         if user_id in split_download_tracker and split_download_tracker[user_id]:
             print(f"DEBUG: Processing final batch set for {user_id}")
-            msg = await app.send_message(user_id, "**ðŸ“¦ Processing final archive...**")
+            msg = await app.send_message(user_id, "**ðŸ“¦ Processing final gathered archive...**")
             trigger = get_trigger_file(split_download_tracker[user_id])
-            password = batch_mode.get(user_id, {}).get("password") or "@UdemyPie"
-            await handle_2gb_plus_file(trigger['path'], user_id, msg, trigger['caption'], trigger['target'], trigger['topic'], password)
+            # Retrieve password from local scope or batch_mode
+            current_pass = password or "@UdemyPie"
+            await handle_2gb_plus_file(trigger['path'], user_id, msg, trigger['caption'], trigger['target'], trigger['topic'], current_pass)
             
             # Cleanup final set
             for tracked in split_download_tracker[user_id]:
