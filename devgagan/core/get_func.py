@@ -100,16 +100,19 @@ async def handle_gathered_set(sender, file_list, edit, password):
         print(f"DEBUG: Uploading single media: {f['name']}")
         await edit.edit(f"**⬆️ Uploading:**\n`{f['name']}`")
         
-        # Auto-fix Chat ID
+        # Resolve target ID correctly
         target = f['target']
         try:
             t_str = str(target).strip()
-            if t_str.isdigit() and len(t_str) >= 10:
-                target = int(f"-100{t_str}")
+            if t_str.isdigit():
+                # ONLY prepend -100 if it's 10+ digits AND NOT the sender's own ID
+                if len(t_str) >= 10 and int(t_str) != sender:
+                    target = int(f"-100{t_str}")
+                else:
+                    target = int(t_str)
         except: pass
         
-        # Use the specific media type if possible, or upload_media as fallback
-        # (This keeps original logic for audio/voice/etc.)
+        # Use upload_media for the actual processing
         await upload_media(sender, target, f['path'], f['caption'], edit, f['topic'])
         
         if os.path.exists(f['path']):
@@ -356,13 +359,17 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
             final_caption = f"**{rel_path}**"
             print(f"DEBUG: Uploading file {current_count}/{total_files}: {rel_path}")
             
-            # Re-resolve target_chat_id and keep it as is if it's a numeric ID
+            # Re-resolve target_chat_id and AUTO-FIX missing -100 prefix ONLY for non-sender IDs
             raw_target = user_chat_ids.get(sender, target_chat_id)
             final_target = raw_target
             try:
                 target_str = str(raw_target).strip()
                 if target_str.isdigit():
-                    final_target = int(target_str)
+                    # Only prepend -100 if it's 10+ digits AND NOT the sender's own ID
+                    if len(target_str) >= 10 and int(target_str) != sender:
+                        final_target = int(f"-100{target_str}")
+                    else:
+                        final_target = int(target_str)
                 elif target_str.startswith("-") and target_str[1:].isdigit():
                     final_target = int(target_str)
                 elif not target_str.startswith("@"):
