@@ -47,25 +47,74 @@ def is_continuation(curr_name, prev_name):
     if not prev_name:
         return False
     
-    # Flexible split patterns: .zip, .rar, .7z, .z01, .001, .part1, .r01, etc.
-    # This regex identifies if a file is an archive part.
-    split_re = re.compile(r'\.(?:zip|rar|7z|z\d+|r\d+|\d+|part\d+(?:\.rar)?)$', re.IGNORECASE)
+    # Define split patterns
+    split_exts = (".zip", ".rar", ".7z", ".z01", ".z02", ".z03", ".z04", ".z05", ".z06", ".z07", ".z08", ".z09", ".001", ".002", ".003", ".part1.rar", ".part2.rar", ".part01.rar", ".r01", ".r02")
     
-    curr_match = split_re.search(curr_name)
-    prev_match = split_re.search(prev_name)
+    curr_low = curr_name.lower()
+    prev_low = prev_name.lower()
     
-    # If BOTH files match archive patterns, they might be parts of the same set
-    if curr_match and prev_match:
-        # Get base names by removing the archive extension part
-        base_curr = split_re.sub('', curr_name).strip()
-        base_prev = split_re.sub('', prev_name).strip()
+    # BOTH must have split archive extensions to be considered parts of a set
+    if curr_low.endswith(split_exts) and prev_low.endswith(split_exts):
+        # Extract base names by stripping any of the split extensions
+        # Example: "MyFile.zip" -> "MyFile", "MyFile.z01" -> "MyFile"
+        ext_pattern = r'\.(?:zip|rar|7z|z\d+|r\d+|\d+|part\d+(?:\.rar)?)$'
+        base_curr = re.sub(ext_pattern, '', curr_name, flags=re.IGNORECASE).strip()
+        base_prev = re.sub(ext_pattern, '', prev_name, flags=re.IGNORECASE).strip()
         
-        # If base names match exactly, they belong to the same set (e.g. test.zip and test.z01)
-        res = base_curr.lower() == base_prev.lower()
-        print(f"DEBUG: Comparing '{curr_name}' and '{prev_name}'. Match: {res}")
-        return res
+        # Match only if the base names are identical
+        match = base_curr.lower() == base_prev.lower()
+        print(f"DEBUG: Comparing Bases - '{base_curr}' vs '{base_prev}'. Match: {match}")
+        return match
     
     return False
+
+async def handle_gathered_set(sender, file_list, edit, password):
+    """Process a gathered set of files (either single file or split archive)."""
+    if not file_list:
+        return
+    
+    total = len(file_list)
+    first_file = file_list[0]
+    
+    # Determine if this is a split archive set or just a single file
+    # If more than 1 file, it's definitely a split set
+    # If 1 file, it could be a single zip or a normal media file
+    
+    archive_exts = (".zip", ".rar", ".7z", ".001", ".part1.rar", ".part01.rar")
+    is_archive = first_file['name'].lower().endswith(archive_exts)
+
+    if total > 1 or is_archive:
+        # ARCHIVE SET (Split or Single Zip)
+        print(f"DEBUG: Processing archive set ({total} files) for {sender}")
+        trigger = get_trigger_file(file_list)
+        await handle_2gb_plus_file(trigger['path'], sender, edit, trigger['caption'], trigger['target'], trigger['topic'], password)
+        
+        # Cleanup all parts
+        for f in file_list:
+            if os.path.exists(f['path']):
+                try: os.remove(f['path'])
+                except: pass
+    else:
+        # SINGLE NORMAL MEDIA
+        f = first_file
+        print(f"DEBUG: Uploading single media: {f['name']}")
+        await edit.edit(f"**⬆️ Uploading:**\n`{f['name']}`")
+        
+        # Auto-fix Chat ID
+        target = f['target']
+        try:
+            t_str = str(target).strip()
+            if t_str.isdigit() and len(t_str) >= 10:
+                target = int(f"-100{t_str}")
+        except: pass
+        
+        # Use the specific media type if possible, or upload_media as fallback
+        # (This keeps original logic for audio/voice/etc.)
+        await upload_media(sender, target, f['path'], f['caption'], edit, f['topic'])
+        
+        if os.path.exists(f['path']):
+            try: os.remove(f['path'])
+            except: pass
 
 def get_trigger_file(file_list):
     """Find the 'master' file in a set of split parts (.zip, .rar, .001, etc.)."""
@@ -430,68 +479,17 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             return
 
         
-        file_name = await get_media_filename(msg)
-        
-        # Determine if it's an archive or normal media
-        archive_extensions = (".zip", ".rar", ".7z", ".001", ".part1.rar", ".tar", ".gz", ".xz", ".z01", ".z02", ".z03", ".z04", ".z05", ".r01", ".r02")
-        is_archive = file_name.lower().endswith(archive_extensions)
-
-        # Unique download directory per user
-        from config import Config as UnzipConfig
-        download_dir = os.path.join(os.getcwd(), UnzipConfig.DOWNLOAD_LOCATION, str(sender))
-        os.makedirs(download_dir, exist_ok=True)
-        file_path = os.path.join(download_dir, file_name)
-
-        if not is_archive:
-            # NORMAL MEDIA: Process immediately
-            print(f"DEBUG: Normal media detected ({file_name}). Processing immediately.")
-            edit = await app.edit_message_text(sender, edit_id, f"**Downloading...**\n`{file_name}`")
-            
-            # Download
-            file = await userbot.download_media(
-                msg,
-                file_name=os.path.abspath(file_path),
-                progress=progress_bar,
-                progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
-            )
-            
-            caption = await get_final_caption(msg, sender)
-            file = await rename_file(file, sender)
-            
-            # Use original media handling logic
-            if msg.audio:
-                result = await app.send_audio(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
-            elif msg.voice:
-                result = await app.send_voice(target_chat_id, file, reply_to_message_id=topic_id)
-            elif msg.video_note:
-                result = await app.send_video_note(target_chat_id, file, reply_to_message_id=topic_id)
-            elif msg.photo:
-                result = await app.send_photo(target_chat_id, file, caption=caption, reply_to_message_id=topic_id)
-            else:
-                # Video or document
-                await upload_media(sender, target_chat_id, file, caption, edit, topic_id)
-            
-            if result: await result.copy(LOG_GROUP)
-            return
-
-        # ARCHIVE: Use look-ahead tracking
-        # Check for sequence break
+        # Determine if we have tracked files and if the new file breaks the sequence
         if sender in split_download_tracker and split_download_tracker[sender]:
             prev_data = split_download_tracker[sender][-1]
             if not is_continuation(file_name, prev_data['name']):
-                 print(f"DEBUG: Sequence break. Processing gathered archive for {sender}")
-                 edit = await app.edit_message_text(sender, edit_id, "**📦 Sequence ended. Processing gathered archive...**")
-                 trigger = get_trigger_file(split_download_tracker[sender])
-                 await handle_2gb_plus_file(trigger['path'], sender, edit, trigger['caption'], trigger['target'], trigger['topic'], password)
-                 
-                 # Cleanup sequence
-                 for tracked in split_download_tracker[sender]:
-                     if os.path.exists(tracked['path']):
-                         try: os.remove(tracked['path'])
-                         except: pass
+                 print(f"DEBUG: Sequence break. Processing gathered set for {sender}")
+                 edit = await app.edit_message_text(sender, edit_id, "**📦 Sequence ended. Processing gathered files...**")
+                 # Process the entire sequence gathered so far
+                 await handle_gathered_set(sender, split_download_tracker[sender], edit, password)
                  split_download_tracker[sender] = [] 
 
-        edit = await app.edit_message_text(sender, edit_id, f"**Downloading Archive Part...**\n`{file_name}`")
+        edit = await app.edit_message_text(sender, edit_id, f"**Downloading...**\n`{file_name}`")
 
         # Download media
         downloaded_path = await userbot.download_media(
@@ -500,12 +498,12 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             progress=progress_bar,
             progress_args=("╭─────────────────────╮\n│      **__Downloading__...**\n├─────────────────────", edit, time.time())
         )
-        file = downloaded_path # For finally cleanup if needed
-        print(f"DEBUG: Downloaded archive part to: {file}")
+        file = downloaded_path
+        print(f"DEBUG: Downloaded to: {file}")
 
         caption = await get_final_caption(msg, sender)
 
-        # Track the file
+        # Track EVERY file for the look-ahead mechanism
         current_data = {
             "path": file,
             "name": file_name,
