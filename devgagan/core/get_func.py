@@ -356,17 +356,13 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
             final_caption = f"**{rel_path}**"
             print(f"DEBUG: Uploading file {current_count}/{total_files}: {rel_path}")
             
-            # Re-resolve target_chat_id and AUTO-FIX missing -100 prefix
+            # Re-resolve target_chat_id and keep it as is if it's a numeric ID
             raw_target = user_chat_ids.get(sender, target_chat_id)
             final_target = raw_target
             try:
                 target_str = str(raw_target).strip()
                 if target_str.isdigit():
-                    # Only prepend -100 if it's NOT the sender's own ID
-                    if len(target_str) >= 10 and int(target_str) != sender:
-                        final_target = int(f"-100{target_str}")
-                    else:
-                        final_target = int(target_str)
+                    final_target = int(target_str)
                 elif target_str.startswith("-") and target_str[1:].isdigit():
                     final_target = int(target_str)
                 elif not target_str.startswith("@"):
@@ -459,15 +455,12 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             try: topic_id = int(topic_id)
             except: pass
         
-        # Ensure target_chat_id is integer if it looks like one, and AUTO-FIX missing -100
+        # Ensure target_chat_id is integer if it looks like one
         try:
             target_str = str(target_chat_id).strip()
             if target_str.isdigit():
-                # Only prepend -100 if it's NOT the sender's own ID
-                if len(target_str) >= 10 and int(target_str) != sender:
-                    target_chat_id = int(f"-100{target_str}")
-                else:
-                    target_chat_id = int(target_str)
+                # NO AUTO-FIX FOR SENDER'S OWN ID
+                target_chat_id = int(target_str)
             elif target_str.startswith("-") and target_str[1:].isdigit():
                 target_chat_id = int(target_str)
         except:
