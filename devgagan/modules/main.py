@@ -309,21 +309,14 @@ async def batch_link(_, message):
 
         await set_interval(user_id, interval_minutes=300)
         
-        # FINAL CHECK: If there are any pending split files after the loop, process them now
-        from devgagan.core.get_func import split_download_tracker, handle_2gb_plus_file, get_trigger_file
+        # FINAL CHECK: If there are any pending tracked files after the loop, process them now
+        from devgagan.core.get_func import split_download_tracker, handle_gathered_set
         if user_id in split_download_tracker and split_download_tracker[user_id]:
             print(f"DEBUG: Processing final batch set for {user_id}")
-            msg = await app.send_message(user_id, "**ðŸ“¦ Processing final gathered archive...**")
-            trigger = get_trigger_file(split_download_tracker[user_id])
+            msg = await app.send_message(user_id, "**ðŸ“¦ Processing final gathered files...**")
             # Use data from current batch scope
             current_pass = password or "@UdemyPie"
-            await handle_2gb_plus_file(trigger['path'], user_id, msg, trigger['caption'], trigger['target'], trigger['topic'], current_pass)
-            
-            # Cleanup final set
-            for tracked in split_download_tracker[user_id]:
-                if os.path.exists(tracked['path']):
-                    try: os.remove(tracked['path'])
-                    except: pass
+            await handle_gathered_set(user_id, split_download_tracker[user_id], msg, current_pass)
             split_download_tracker.pop(user_id, None)
 
         await pin_msg.edit_text(
