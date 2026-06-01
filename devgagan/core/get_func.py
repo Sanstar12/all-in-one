@@ -215,7 +215,8 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                     progress=progress_bar,
                     progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
                 )
-                await dm.copy(LOG_GROUP)
+                try: await dm.copy(LOG_GROUP)
+                except: pass
                 
             elif file.split('.')[-1].lower() in image_formats:
                 dm = await app.send_photo(
@@ -227,7 +228,8 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                     reply_to_message_id=topic_id,
                     progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
                 )
-                await dm.copy(LOG_GROUP)
+                try: await dm.copy(LOG_GROUP)
+                except: pass
             else:
                 dm = await app.send_document(
                     chat_id=target_chat_id,
@@ -240,7 +242,8 @@ async def upload_media(sender, target_chat_id, file, caption, edit, topic_id):
                     progress_args=("╭─────────────────────╮\n│      **__Pyro Uploader__**\n├─────────────────────", edit, time.time())
                 )
                 await asyncio.sleep(2)
-                await dm.copy(LOG_GROUP)
+                try: await dm.copy(LOG_GROUP)
+                except: pass
 
         # Telethon upload
         elif upload_method == "Telethon":
@@ -331,7 +334,7 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
         final_files = []
         for f in extracted_files:
             base = os.path.basename(f)
-            if base not in ignore_list and not base.lower().endswith(".vtt"):
+            if base not in ignore_list and not base.endswith(".vtt"):
                 final_files.append(f)
 
         total_files = len(final_files)
@@ -479,15 +482,37 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
             return
 
         
-        # Determine if we have tracked files and if the new file breaks the sequence
+        file_name = await get_media_filename(msg)
+        
+        # Determine if it's an archive or normal media
+        archive_extensions = (".zip", ".rar", ".7z", ".001", ".part1.rar", ".tar", ".gz", ".xz", ".z01", ".z02", ".z03", ".z04", ".z05", ".r01", ".r02")
+        is_archive = file_name.lower().endswith(archive_extensions)
+
+        # Unique download directory per user
+        from config import Config as UnzipConfig
+        download_dir = os.path.join(os.getcwd(), UnzipConfig.DOWNLOAD_LOCATION, str(sender))
+        os.makedirs(download_dir, exist_ok=True)
+        file_path = os.path.join(download_dir, file_name)
+
+        # SEQUENCE CHECK: If we have tracked files, check if this new file breaks the sequence
         if sender in split_download_tracker and split_download_tracker[sender]:
             prev_data = split_download_tracker[sender][-1]
             if not is_continuation(file_name, prev_data['name']):
                  print(f"DEBUG: Sequence break. Processing gathered set for {sender}")
                  edit = await app.edit_message_text(sender, edit_id, "**📦 Sequence ended. Processing gathered files...**")
-                 # Process the entire sequence gathered so far
                  await handle_gathered_set(sender, split_download_tracker[sender], edit, password)
                  split_download_tracker[sender] = [] 
+
+        # If it's a standalone normal file, we can process it immediately to maintain order
+        # (This implements the '+1' concept: we wait for the NEXT file to see if the PREVIOUS was a split part)
+        # But if the current file is NOT an archive, and there's no pending archive, we can just process it.
+        # However, to be strictly '+1', we track EVERYTHING.
+        
+        # Standalone .vtt check (Case Sensitive)
+        if file_name.endswith(".vtt"):
+            print(f"DEBUG: Skipping standalone .vtt file: {file_name}")
+            await app.delete_messages(sender, edit_id)
+            return
 
         edit = await app.edit_message_text(sender, edit_id, f"**Downloading...**\n`{file_name}`")
 
