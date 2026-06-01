@@ -315,8 +315,12 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
         
         if is_archive:
             print(f"DEBUG: Archive detected. Attempting extraction to {extract_path}")
-            await edit.edit(f"**📦 Extracting archive...**\nPassword: `{'@UdemyPie (Default)' if password == '@UdemyPie' else 'Custom'}`")
-            extraction = await _extract_with_7z_helper(extract_path, file, password)
+            # Ensure we always have a password (fallback to default)
+            active_password = password if password else "@UdemyPie"
+            print(f"DEBUG: Using password for extraction: {active_password}")
+            
+            await edit.edit(f"**📦 Extracting archive...**\nPassword: `{'@UdemyPie (Default)' if active_password == '@UdemyPie' else 'Custom'}`")
+            extraction = await _extract_with_7z_helper(extract_path, file, active_password)
             
             ext_lower = extraction.lower()
             if "password error" in ext_lower or "wrong password" in ext_lower or "data error" in ext_lower or "cannot open encrypted" in ext_lower:
@@ -358,8 +362,8 @@ async def handle_2gb_plus_file(file, sender, edit, caption, target_chat_id, topi
             try:
                 target_str = str(raw_target).strip()
                 if target_str.isdigit():
-                    # If it's a 10-digit number (common for channel IDs), prepend -100
-                    if len(target_str) >= 10:
+                    # Only prepend -100 if it's NOT the sender's own ID
+                    if len(target_str) >= 10 and int(target_str) != sender:
                         final_target = int(f"-100{target_str}")
                     else:
                         final_target = int(target_str)
@@ -459,7 +463,8 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
         try:
             target_str = str(target_chat_id).strip()
             if target_str.isdigit():
-                if len(target_str) >= 10:
+                # Only prepend -100 if it's NOT the sender's own ID
+                if len(target_str) >= 10 and int(target_str) != sender:
                     target_chat_id = int(f"-100{target_str}")
                 else:
                     target_chat_id = int(target_str)
@@ -502,11 +507,6 @@ async def get_msg(userbot, sender, edit_id, msg_link, i, message):
                  edit = await app.edit_message_text(sender, edit_id, "**📦 Sequence ended. Processing gathered files...**")
                  await handle_gathered_set(sender, split_download_tracker[sender], edit, password)
                  split_download_tracker[sender] = [] 
-
-        # If it's a standalone normal file, we can process it immediately to maintain order
-        # (This implements the '+1' concept: we wait for the NEXT file to see if the PREVIOUS was a split part)
-        # But if the current file is NOT an archive, and there's no pending archive, we can just process it.
-        # However, to be strictly '+1', we track EVERYTHING.
         
         # Standalone .vtt check (Case Sensitive)
         if file_name.endswith(".vtt"):
